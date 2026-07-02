@@ -1,0 +1,52 @@
+# PR Labeler Configuration
+# Used by .github/workflows/labeler.yml — a missing file makes the
+# action return 404 Not Found, so keep this in sync with the workflow.
+
+# Core Go source: engine, providers, orchestrator.
+core:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/**'
+      - 'main.go'
+
+# Provider clients specifically.
+provider:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/gitlab/**'
+      - 'internal/gitea/**'
+      - 'internal/remote/**'
+
+# Prose changes.
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '*.md'
+      - 'docs/**'
+
+# Tests.
+test:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*_test.go'
+
+# CI + release plumbing.
+ci:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
+      - '.github/labeler.yml'
+      - '.goreleaser.yaml'
+      - 'Dockerfile'
+      - 'Makefile'
+
+# Governance / policy docs.
+governance:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'GOVERNANCE.md'
+      - 'MAINTAINERS.md'
+      - 'CODE_OF_CONDUCT.md'
+      - 'SECURITY.md'
+      - '.bestpractices.json'

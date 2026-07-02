@@ -60,10 +60,12 @@ func Run(ctx context.Context, providers []remote.Provider, repos []remote.Repo, 
 		}(i)
 	}
 
+enqueue:
 	for _, r := range repos {
 		select {
 		case <-ctx.Done():
-			break
+			// break out of the outer for, not just the select.
+			break enqueue
 		case jobs <- r:
 		}
 	}
