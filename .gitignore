@@ -1,0 +1,9 @@
+/corral-sync
+/corral-sync.exe
+/dist/
+*.test
+*.out
+coverage.txt
+.envrc
+.env
+.DS_Store

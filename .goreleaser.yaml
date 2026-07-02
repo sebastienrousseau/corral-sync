@@ -1,0 +1,118 @@
+# GoReleaser v2 config for corral-sync.
+# https://goreleaser.com/customization/
+version: 2
+
+project_name: corral-sync
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: corral-sync
+    main: .
+    binary: corral-sync
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X main.Version={{ .Version }}
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - DEPLOYMENT.md
+
+# checksums.txt aggregates SHA-256s for every archive above.
+# actions/attest-build-provenance uses it to attest the whole set
+# in one call — no need to enumerate individual files here.
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-next'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^chore(ci):'
+      - '^chore(docs):'
+      - '^chore(deps):'
+      - '^docs:'
+      - '^test:'
+
+# Multi-arch OCI image published to ghcr.io. Each arch is a separate
+# image build; docker_manifests: below stitches them into one tag.
+dockers:
+  - image_templates:
+      - ghcr.io/sebastienrousseau/corral-sync:{{ .Version }}-amd64
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description=Mirror a corral tree to GitLab and Gitea
+      - --label=org.opencontainers.image.url=https://github.com/sebastienrousseau/corral-sync
+      - --label=org.opencontainers.image.source=https://github.com/sebastienrousseau/corral-sync
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=GPL-3.0-only
+
+  - image_templates:
+      - ghcr.io/sebastienrousseau/corral-sync:{{ .Version }}-arm64
+    use: buildx
+    dockerfile: Dockerfile
+    goarch: arm64
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description=Mirror a corral tree to GitLab and Gitea
+      - --label=org.opencontainers.image.url=https://github.com/sebastienrousseau/corral-sync
+      - --label=org.opencontainers.image.source=https://github.com/sebastienrousseau/corral-sync
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=GPL-3.0-only
+
+docker_manifests:
+  - name_template: ghcr.io/sebastienrousseau/corral-sync:{{ .Version }}
+    image_templates:
+      - ghcr.io/sebastienrousseau/corral-sync:{{ .Version }}-amd64
+      - ghcr.io/sebastienrousseau/corral-sync:{{ .Version }}-arm64
+  - name_template: ghcr.io/sebastienrousseau/corral-sync:latest
+    image_templates:
+      - ghcr.io/sebastienrousseau/corral-sync:{{ .Version }}-amd64
+      - ghcr.io/sebastienrousseau/corral-sync:{{ .Version }}-arm64
+
+# Keyless cosign signature per per-arch image. The signature +
+# certificate land in the same OCI registry as the image, addressable
+# by digest. Verify with:
+#   cosign verify \
+#     --certificate-identity-regexp='https://github.com/sebastienrousseau/corral-sync/.github/workflows/release.yml@.*' \
+#     --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+#     ghcr.io/sebastienrousseau/corral-sync:<version>
+docker_signs:
+  - cmd: cosign
+    args:
+      - 'sign'
+      - '--yes'
+      - '${artifact}@${digest}'
+    artifacts: manifests
+
+release:
+  mode: replace
+  github:
+    owner: sebastienrousseau
+    name: corral-sync

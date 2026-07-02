@@ -1,0 +1,45 @@
+version: 2
+updates:
+  # Go modules: stdlib-only for now, but Dependabot still catches
+  # go.mod indirect additions if any are pulled in later.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    labels: [dependencies, go]
+    commit-message:
+      prefix: chore(deps)
+      include: scope
+
+  # GitHub Actions: every workflow action is SHA-pinned, so Dependabot
+  # is the mechanism that keeps them current with security patches.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: chore(ci)
+      include: scope
+
+  # Dockerfile base image pin — refreshed on new distroless releases.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker)
+      include: scope

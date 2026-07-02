@@ -1,0 +1,22 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'
+
+permissions: {}
+
+jobs:
+  security:
+    name: Security
+    permissions:
+      contents: read
+      security-events: write
+    uses: sebastienrousseau/pipelines/.github/workflows/security.yml@3b0c5ce38f72e1b765265a172ac7407daad7f244
+    with:
+      language: 'go'
+      severity-threshold: 'moderate'

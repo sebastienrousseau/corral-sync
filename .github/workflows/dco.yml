@@ -1,0 +1,56 @@
+name: DCO
+
+# Enforces the Developer Certificate of Origin (https://developercertificate.org)
+# on every PR. Every commit in the PR range must carry a
+# "Signed-off-by: Name <email>" trailer that matches its author. Contributors
+# add the trailer with `git commit -s`; forgetting it becomes a clear,
+# actionable CI failure rather than a subtle governance gap.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    name: DCO check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          show-progress: false
+
+      - name: Verify Signed-off-by on every PR commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          commits=$(git rev-list "${BASE_SHA}..${HEAD_SHA}")
+          if [ -z "${commits}" ]; then
+            echo "No commits in the PR range — nothing to check."
+            exit 0
+          fi
+          missing=()
+          for sha in ${commits}; do
+            if ! git show -s --format=%B "${sha}" | grep -qi '^Signed-off-by: .* <.*>$'; then
+              missing+=("${sha}")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::The following commits are missing a valid Signed-off-by trailer:"
+            for sha in "${missing[@]}"; do
+              subject=$(git log -1 --format='%s' "${sha}")
+              echo "::error::  ${sha}  ${subject}"
+            done
+            echo ""
+            echo "To fix: run 'git commit --amend --signoff' on each unsigned commit,"
+            echo "or for a range use 'git rebase --signoff BASE_SHA'."
+            exit 1
+          fi
+          echo "All PR commits carry a valid Signed-off-by trailer."

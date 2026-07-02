@@ -1,0 +1,45 @@
+# OpenSSF Scorecard — self-assessment for this repository.
+# Runs weekly and on push to main. Results visible in GitHub Security tab.
+
+name: OpenSSF Scorecard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions: {}
+
+jobs:
+  analysis:
+    name: Scorecard Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+          # Optional PAT with read access to administrative settings so
+          # checks such as Branch-Protection can be evaluated. Falls back
+          # to the default token if the secret is unset.
+          repo_token: ${{ secrets.SCORECARD_TOKEN }}
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: results.sarif
