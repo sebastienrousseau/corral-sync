@@ -97,10 +97,17 @@ func (c *Client) EnsureRepo(ctx context.Context, r remote.Repo) (string, error) 
 	payload := map[string]any{
 		"name":                   r.Name,
 		"path":                   r.Name,
-		"namespace_id":           c.nsID,
 		"description":            r.Description,
 		"visibility":             string(r.Visibility),
 		"initialize_with_readme": false,
+	}
+	// GitLab defaults `namespace_id` to the authenticated user's personal
+	// namespace when the field is absent. We include it only when the
+	// caller pinned a specific namespace (in which case c.nsID was
+	// resolved via /api/v4/namespaces/<path> in resolveNamespace, not
+	// from /api/v4/user — those two IDs are distinct).
+	if c.nsID != 0 {
+		payload["namespace_id"] = c.nsID
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -189,27 +196,32 @@ func (c *Client) getProject(ctx context.Context, namespace, name string) (*proje
 	return &p, nil
 }
 
-// resolveNamespace populates c.nsID / c.nsCurrent lazily. If a namespace
-// was configured we look it up; otherwise we call /user to get the token
-// owner's personal namespace.
+// resolveNamespace populates c.nsCurrent (and, when a namespace was
+// explicitly configured, c.nsID). If no namespace was configured we
+// resolve the token owner's username via /api/v4/user and leave nsID at
+// zero — EnsureRepo then omits namespace_id from the POST payload, and
+// GitLab defaults to the authenticated user's personal namespace.
+//
+// This avoids a common bug: the user's `id` from /user is NOT the same
+// as their personal namespace's `id` on modern GitLab.com. Sending the
+// user id as namespace_id makes GitLab reply "namespace: is not valid".
 func (c *Client) resolveNamespace(ctx context.Context) (string, error) {
 	c.nsMu.Lock()
 	defer c.nsMu.Unlock()
 
-	if c.nsID != 0 {
+	if c.nsCurrent != "" {
 		return c.nsCurrent, nil
 	}
 
 	if c.namespace == "" {
-		// Resolve the token's own user.
+		// Resolve just the username — GitLab handles namespace_id
+		// defaulting for us.
 		var user struct {
-			ID       int    `json:"id"`
 			Username string `json:"username"`
 		}
 		if err := c.getJSON(ctx, "/api/v4/user", &user); err != nil {
 			return "", err
 		}
-		c.nsID = user.ID
 		c.nsCurrent = user.Username
 		return c.nsCurrent, nil
 	}

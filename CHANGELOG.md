@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **GitLab project creation** was rejected with
+  `namespace: is not valid` whenever no explicit namespace was
+  configured. Root cause: we set `namespace_id` to the value returned
+  by `/api/v4/user`.`id`, but the personal-namespace ID is distinct
+  from the user ID on modern GitLab.com. Fix: omit `namespace_id`
+  from the create payload when no namespace was pinned; GitLab
+  defaults to the authenticated user's personal namespace.
+- **Empty local repositories** (unborn HEAD — created on GitHub but
+  never pushed to) no longer surface as `git push` errors. corral-sync
+  now performs the same `git rev-parse --verify -q HEAD^{commit}`
+  probe that corral uses on the pull side, and SKIPs those repos with
+  an INFO log ("skipping empty repo (no commits yet)").
+
+## [0.0.1] — 2026-07-02
+
 ### Added
 
 - Initial import of `corral-sync`: a Go CLI that mirrors a corral-organised

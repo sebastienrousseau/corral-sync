@@ -29,6 +29,20 @@ var nonInteractiveEnv = []string{
 	"GCM_INTERACTIVE=Never",
 }
 
+// IsEmpty reports whether the local repo at repoDir has no commits
+// (unborn HEAD). `git push --all` on such a repo fails with
+// "No refs in common and none specified; doing nothing" — a real
+// upstream state, not a bug on our side. Callers should SKIP the push
+// instead of surfacing the git error.
+//
+// Matches corral's internal/git.IsEmpty implementation so the two
+// binaries agree on which repositories are "not yet worth pushing".
+func IsEmpty(repoDir string) bool {
+	// #nosec G204 -- fixed binary; repoDir is a local path.
+	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+	return cmd.Run() != nil
+}
+
 // EnsureRemote adds a remote at name→url on the repo at repoDir. If a
 // remote with that name already exists and its URL matches, we no-op.
 // If the URL differs we update it via `git remote set-url`, which keeps
