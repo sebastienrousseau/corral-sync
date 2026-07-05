@@ -82,7 +82,18 @@ enqueue:
 // providers sequentially per repo so the per-provider errors are
 // attributable and so we don't run two git-push commands in parallel
 // against the same .git directory (which git supports but doesn't love).
+//
+// An empty local repo (unborn HEAD) is a legitimate state — the upstream
+// GitHub repo may have been created and never pushed to. We SKIP it
+// with an INFO log rather than erroring out on `git push`.
 func processOne(ctx context.Context, providers []remote.Provider, r remote.Repo, dryRun bool, log *slog.Logger) error {
+	// Empty-repo check runs once per repo (not per provider) — the
+	// answer does not depend on which remote we would push to.
+	if !dryRun && gitops.IsEmpty(r.LocalPath) {
+		log.Info("skipping empty repo (no commits yet)")
+		return nil
+	}
+
 	for _, p := range providers {
 		lg := log.With(slog.String("provider", p.Name()))
 		if dryRun {
