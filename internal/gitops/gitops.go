@@ -75,8 +75,14 @@ func EnsureRemote(ctx context.Context, repoDir, name, url string) error {
 // Together they produce absolute-parity branch-refs on the remote for
 // the ones we own; branches created directly on the remote will be
 // deleted (which is what "mirror" means, and what --prune promises).
+//
+// --no-verify skips any local pre-push hook (e.g. a repo whose hook runs
+// a build/test that can't succeed in this environment) so it never blocks
+// the mirror. Branch pushes are intentionally NOT --force: a non-fast-
+// forward is surfaced as an error rather than silently overwriting remote
+// history — the safety net that stops a stale local clobbering the remote.
 func PushAllWithPrune(ctx context.Context, repoDir, remoteName string) error {
-	return run(ctx, repoDir, "git", "push", "--prune", "--all", remoteName)
+	return run(ctx, repoDir, "git", "push", "--prune", "--all", "--no-verify", remoteName)
 }
 
 // PushTagsWithPrune uploads every local tag and deletes remote tags that
@@ -85,8 +91,15 @@ func PushAllWithPrune(ctx context.Context, repoDir, remoteName string) error {
 //
 // `--prune` and `--tags` compose: any remote-side tag missing from the
 // local repo is deleted.
+//
+// Unlike branches, tag pushes ARE --force: git refuses to update an
+// existing tag by default, so a tag that was re-pointed at origin (the
+// canonical source) would otherwise fail forever with "already exists".
+// Tags are lightweight, movable pointers and the local namespace is
+// authoritative, so force-mirroring them to match origin is intended.
+// --no-verify skips local pre-push hooks, same as the branch push.
 func PushTagsWithPrune(ctx context.Context, repoDir, remoteName string) error {
-	return run(ctx, repoDir, "git", "push", "--prune", "--tags", remoteName)
+	return run(ctx, repoDir, "git", "push", "--prune", "--tags", "--force", "--no-verify", remoteName)
 }
 
 // run executes a git command in repoDir, discarding its output; errors
