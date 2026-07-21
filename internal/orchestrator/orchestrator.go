@@ -38,6 +38,8 @@ func Run(ctx context.Context, providers []remote.Provider, repos []remote.Repo, 
 	jobs := make(chan remote.Repo)
 
 	var processed, errs atomic.Int64
+	var providerErrs atomic.Int64
+	var disabled sync.Map
 
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -50,7 +52,7 @@ func Run(ctx context.Context, providers []remote.Provider, repos []remote.Repo, 
 					slog.String("repo", r.Name),
 					slog.String("visibility", string(r.Visibility)),
 				)
-				if err := processOne(ctx, providers, r, dryRun, lg); err != nil {
+				if err := processOne(ctx, providers, r, dryRun, &disabled, &providerErrs, lg); err != nil {
 					errs.Add(1)
 					lg.Error("repo failed", slog.String("err", err.Error()))
 					continue
@@ -74,7 +76,7 @@ enqueue:
 
 	return Result{
 		Processed: int(processed.Load()),
-		Errors:    int(errs.Load()),
+		Errors:    int(errs.Load() + providerErrs.Load()),
 	}
 }
 
@@ -86,7 +88,7 @@ enqueue:
 // An empty local repo (unborn HEAD) is a legitimate state — the upstream
 // GitHub repo may have been created and never pushed to. We SKIP it
 // with an INFO log rather than erroring out on `git push`.
-func processOne(ctx context.Context, providers []remote.Provider, r remote.Repo, dryRun bool, log *slog.Logger) error {
+func processOne(ctx context.Context, providers []remote.Provider, r remote.Repo, dryRun bool, disabled *sync.Map, providerErrs *atomic.Int64, log *slog.Logger) error {
 	// Empty-repo check runs once per repo (not per provider) — the
 	// answer does not depend on which remote we would push to.
 	if !dryRun && gitops.IsEmpty(r.LocalPath) {
@@ -96,6 +98,9 @@ func processOne(ctx context.Context, providers []remote.Provider, r remote.Repo,
 
 	for _, p := range providers {
 		lg := log.With(slog.String("provider", p.Name()))
+		if _, ok := disabled.Load(p.Name()); ok {
+			continue
+		}
 		if dryRun {
 			lg.Info("dry-run: would ensure repo + push branches + tags")
 			continue
@@ -103,6 +108,13 @@ func processOne(ctx context.Context, providers []remote.Provider, r remote.Repo,
 
 		cloneURL, err := p.EnsureRepo(ctx, r)
 		if err != nil {
+			if remote.IsFatal(err) {
+				if _, loaded := disabled.LoadOrStore(p.Name(), err.Error()); !loaded {
+					providerErrs.Add(1)
+					lg.Error("provider disabled", slog.String("err", err.Error()))
+				}
+				continue
+			}
 			return err
 		}
 		lg.Debug("ensured", slog.String("clone_url", cloneURL))
