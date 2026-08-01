@@ -33,6 +33,7 @@ var Version = "dev"
 
 var (
 	exitProcess               = os.Exit
+	stdout          io.Writer = os.Stdout
 	stderr          io.Writer = os.Stderr
 	loadConfig                = config.Load
 	walkRepos                 = crawler.Walk
@@ -51,6 +52,11 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) == 1 && args[0] == "--version" {
+		_, err := fmt.Fprintln(stdout, "corral-sync version", Version)
+		return err
+	}
+
 	cfg, err := loadConfig(args)
 	if err != nil {
 		return err

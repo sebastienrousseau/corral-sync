@@ -1,6 +1,7 @@
 SHELL := /usr/bin/env bash
 
 BINARY  := corral-sync
+PREFIX  ?= $(HOME)/.local
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.Version=$(VERSION)
 
@@ -10,7 +11,8 @@ build:
 	go build -ldflags="$(LDFLAGS)" -o $(BINARY) .
 
 install: build
-	install -m 0755 $(BINARY) $(HOME)/.local/bin/$(BINARY)
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 0755 $(BINARY) $(DESTDIR)$(PREFIX)/bin/$(BINARY)
 
 test:
 	go test ./...
