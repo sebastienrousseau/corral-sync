@@ -27,6 +27,7 @@ func TestEnsureRepoReusesExistingRepoBeforeCreate(t *testing.T) {
 				Name:     "existing",
 				FullName: "alice/existing",
 				SSHURL:   "git@gitea.example.com:alice/existing.git",
+				Private:  true,
 			}), nil
 		case "POST /api/v1/user/repos":
 			posted = true

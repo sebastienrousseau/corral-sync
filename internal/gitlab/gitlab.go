@@ -15,15 +15,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/sebastienrousseau/corral-sync/internal/remote"
+)
+
+var (
+	marshalJSON = json.Marshal
+	newRequest  = http.NewRequestWithContext
 )
 
 // Client is the GitLab API client. It is safe for concurrent use — the
@@ -49,10 +52,8 @@ func New(baseURL, token, namespace string, logger *slog.Logger) *Client {
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		token:     token,
 		namespace: namespace,
-		http: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		log: logger.With(slog.String("provider", "gitlab")),
+		http:      remote.NewHTTPClient(),
+		log:       logger.With(slog.String("provider", "gitlab")),
 	}
 }
 
@@ -69,6 +70,7 @@ type projectJSON struct {
 	PathWithNamespace string `json:"path_with_namespace"`
 	SSHURLToRepo      string `json:"ssh_url_to_repo"`
 	HTTPURLToRepo     string `json:"http_url_to_repo"`
+	Visibility        string `json:"visibility"`
 }
 
 // EnsureRepo satisfies [remote.Provider].
@@ -89,6 +91,12 @@ type projectJSON struct {
 // Some deployments return 409. We treat both as "already exists" and
 // resolve the existing project via GET /projects/<url-encoded-path>.
 func (c *Client) EnsureRepo(ctx context.Context, r remote.Repo) (string, error) {
+	if r.Visibility == "" {
+		r.Visibility = remote.Private
+	}
+	if err := remote.ValidateRepo(r); err != nil {
+		return "", err
+	}
 	ns, err := c.resolveNamespace(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolve namespace: %w", err)
@@ -109,12 +117,12 @@ func (c *Client) EnsureRepo(ctx context.Context, r remote.Repo) (string, error) 
 	if c.nsID != 0 {
 		payload["namespace_id"] = c.nsID
 	}
-	body, err := json.Marshal(payload)
+	body, err := marshalJSON(payload)
 	if err != nil {
 		return "", fmt.Errorf("marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v4/projects", bytes.NewReader(body))
+	req, err := newRequest(ctx, http.MethodPost, c.baseURL+"/api/v4/projects", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -126,34 +134,60 @@ func (c *Client) EnsureRepo(ctx context.Context, r remote.Repo) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("POST projects: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusCreated: // 201
 		var p projectJSON
-		if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+		if err := remote.DecodeJSON(resp.Body, &p); err != nil {
 			return "", fmt.Errorf("decode 201: %w", err)
+		}
+		if err := validateProject(p, r.Visibility); err != nil {
+			return "", err
 		}
 		c.log.Info("created project", slog.String("path", p.PathWithNamespace))
 		return p.SSHURLToRepo, nil
 
 	case http.StatusBadRequest, http.StatusConflict:
-		msg, _ := io.ReadAll(resp.Body)
+		msg, readErr := remote.ReadBody(resp.Body)
+		if readErr != nil {
+			return "", readErr
+		}
 		if !alreadyExists(msg) {
-			return "", fmt.Errorf("gitlab create returned %d: %s", resp.StatusCode, truncate(msg))
+			return "", fmt.Errorf("gitlab create returned %d: %s", resp.StatusCode, truncate(remote.Redact(msg, c.token)))
 		}
 		// Already exists — resolve the existing project and return its URL.
 		p, err := c.getProject(ctx, ns, r.Name)
 		if err != nil {
 			return "", fmt.Errorf("resolve existing project %s/%s: %w", ns, r.Name, err)
 		}
+		if err := validateProject(*p, r.Visibility); err != nil {
+			return "", err
+		}
 		c.log.Debug("project exists, reusing", slog.String("path", p.PathWithNamespace))
 		return p.SSHURLToRepo, nil
 
 	default:
-		msg, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("gitlab create returned %d: %s", resp.StatusCode, truncate(msg))
+		msg, readErr := remote.ReadBody(resp.Body)
+		if readErr != nil {
+			return "", readErr
+		}
+		err := fmt.Errorf("gitlab create returned %d: %s", resp.StatusCode, truncate(remote.Redact(msg, c.token)))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return "", remote.Fatal(err)
+		}
+		return "", err
 	}
+}
+
+func validateProject(p projectJSON, want remote.Visibility) error {
+	if remote.Visibility(p.Visibility) != want {
+		return fmt.Errorf("existing GitLab project visibility is %q, want %q", p.Visibility, want)
+	}
+	if err := remote.ValidateCloneURL(p.SSHURLToRepo); err != nil {
+		return fmt.Errorf("invalid GitLab clone URL: %w", err)
+	}
+	return nil
 }
 
 // alreadyExists returns true if the GitLab error body describes a
@@ -173,7 +207,7 @@ func alreadyExists(body []byte) bool {
 func (c *Client) getProject(ctx context.Context, namespace, name string) (*projectJSON, error) {
 	full := namespace + "/" + name
 	u := c.baseURL + "/api/v4/projects/" + url.PathEscape(full)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := newRequest(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -184,13 +218,16 @@ func (c *Client) getProject(ctx context.Context, namespace, name string) (*proje
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GET project returned %d: %s", resp.StatusCode, truncate(msg))
+		msg, readErr := remote.ReadBody(resp.Body)
+		if readErr != nil {
+			return nil, readErr
+		}
+		return nil, fmt.Errorf("GET project returned %d: %s", resp.StatusCode, truncate(remote.Redact(msg, c.token)))
 	}
 	var p projectJSON
-	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+	if err := remote.DecodeJSON(resp.Body, &p); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -222,6 +259,9 @@ func (c *Client) resolveNamespace(ctx context.Context) (string, error) {
 		if err := c.getJSON(ctx, "/api/v4/user", &user); err != nil {
 			return "", err
 		}
+		if user.Username == "" {
+			return "", errors.New("GitLab user response contained an empty username")
+		}
 		c.nsCurrent = user.Username
 		return c.nsCurrent, nil
 	}
@@ -238,6 +278,9 @@ func (c *Client) resolveNamespace(ctx context.Context) (string, error) {
 	if ns.ID == 0 {
 		return "", errors.New("namespace not found")
 	}
+	if ns.FullPath == "" {
+		return "", errors.New("GitLab namespace response contained an empty path")
+	}
 	c.nsID = ns.ID
 	c.nsCurrent = ns.FullPath
 	return c.nsCurrent, nil
@@ -245,7 +288,7 @@ func (c *Client) resolveNamespace(ctx context.Context) (string, error) {
 
 // getJSON is a small helper for authenticated GET-then-decode requests.
 func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	req, err := newRequest(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return err
 	}
@@ -256,12 +299,19 @@ func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("GET %s returned %d: %s", path, resp.StatusCode, truncate(msg))
+		msg, readErr := remote.ReadBody(resp.Body)
+		if readErr != nil {
+			return readErr
+		}
+		err := fmt.Errorf("GET %s returned %d: %s", path, resp.StatusCode, truncate(remote.Redact(msg, c.token)))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return remote.Fatal(err)
+		}
+		return err
 	}
-	return json.NewDecoder(resp.Body).Decode(dst)
+	return remote.DecodeJSON(resp.Body, dst)
 }
 
 // truncate keeps log records readable when the API returns a giant HTML

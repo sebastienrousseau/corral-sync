@@ -37,6 +37,7 @@ cron will email you on failure.
 | `--gitea-url` | `GITEA_URL` | — | Gitea base URL (required if `GITEA_TOKEN` set) |
 | `--gitea-owner` | `GITEA_OWNER` | (token owner) | Gitea user or org |
 | `--workers` | `CORRAL_SYNC_WORKERS` | `4` | concurrent repos |
+| `--timeout` | `CORRAL_SYNC_TIMEOUT` | `5m` | maximum time per repository/provider operation |
 | `--dry-run` | — | `false` | log actions, do nothing |
 | `--log-level` | `CORRAL_SYNC_LOG_LEVEL` | `info` | debug/info/warn/error |
 | — | `GL_TOKEN` | — | GitLab PAT (empty = disable GitLab) |
@@ -58,6 +59,13 @@ cron will email you on failure.
 - **Non-interactive git env** — `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=echo`,
   `GCM_INTERACTIVE=Never`; a cron run without a credential helper fails
   loudly instead of hanging.
+- **Fail-closed destinations** — provider API origins must use HTTPS;
+  redirects, credential-bearing clone URLs, visibility mismatches, and
+  duplicate repository names are rejected before any push.
+- **Bounded operations** — API responses, HTTP requests, git commands, and
+  worker concurrency all have explicit resource limits.
+- **Continuous assurance** — race tests, vulnerability scanning, native Go
+  fuzzing, and a 100% statement-coverage gate run in CI.
 
 ## Deployment
 

@@ -7,7 +7,13 @@
 // [Provider.EnsureRepo], never to a GitLab-specific or Gitea-specific type.
 package remote
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"strings"
+)
 
 // Visibility describes how a repository should be exposed on the remote
 // provider. The value is deduced from the local directory layout produced by
@@ -61,4 +67,51 @@ type Provider interface {
 	// already exist, and returns the SSH or HTTPS clone URL that
 	// git push should target. Existing-repo is not an error.
 	EnsureRepo(ctx context.Context, r Repo) (cloneURL string, err error)
+}
+
+// ValidateRepo rejects values that could create ambiguous provider paths or
+// accidentally weaken a repository's visibility.
+func ValidateRepo(r Repo) error {
+	if r.Name == "" || r.Name == "." || r.Name == ".." || len(r.Name) > 100 ||
+		strings.ContainsAny(r.Name, "/\\\r\n\x00") {
+		return fmt.Errorf("invalid repository name %q", r.Name)
+	}
+	if r.Visibility != Public && r.Visibility != Private {
+		return fmt.Errorf("invalid repository visibility %q", r.Visibility)
+	}
+	return nil
+}
+
+// ValidateCloneURL accepts authenticated SSH transport and credential-free
+// HTTPS URLs. Local paths, insecure HTTP, embedded credentials, and option-like
+// values are rejected before they can reach git.
+func ValidateCloneURL(raw string) error {
+	if raw == "" || strings.HasPrefix(raw, "-") || strings.ContainsAny(raw, "\r\n\x00") {
+		return errors.New("invalid clone URL")
+	}
+	if strings.HasPrefix(raw, "git@") {
+		hostPath := strings.TrimPrefix(raw, "git@")
+		parts := strings.SplitN(hostPath, ":", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.HasPrefix(parts[1], "/") {
+			return errors.New("invalid SSH clone URL")
+		}
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return errors.New("invalid clone URL")
+	}
+	switch u.Scheme {
+	case "https":
+		if u.User != nil {
+			return errors.New("HTTPS clone URL must not contain credentials")
+		}
+	case "ssh":
+		if u.User == nil || u.User.Username() == "" {
+			return errors.New("SSH clone URL must include a user")
+		}
+	default:
+		return fmt.Errorf("unsupported clone URL scheme %q", u.Scheme)
+	}
+	return nil
 }

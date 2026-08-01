@@ -12,9 +12,17 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+)
+
+var (
+	statPath     = os.Stat
+	absolutePath = filepath.Abs
+	userHomeDir  = os.UserHomeDir
 )
 
 // Config is the resolved configuration for a corral-sync run. Every field
@@ -49,6 +57,8 @@ type Config struct {
 	// Higher values speed up large mirrors at the cost of API rate
 	// limits and local git parallelism. 4 is a safe default.
 	Workers int
+	// Timeout bounds all work for one repository/provider pair.
+	Timeout time.Duration
 
 	// DryRun causes the orchestrator to log every intended action
 	// without performing any HTTP request or git command. Useful when
@@ -81,6 +91,7 @@ func Load(args []string) (Config, error) {
 		GiteaToken:      os.Getenv("GITEA_TOKEN"),
 		GiteaURL:        os.Getenv("GITEA_URL"),
 		GiteaOwner:      os.Getenv("GITEA_OWNER"),
+		Timeout:         parseDurationOr("CORRAL_SYNC_TIMEOUT", 5*time.Minute),
 	}
 
 	// Flags override env. Flag names deliberately use hyphenated form
@@ -91,6 +102,7 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&c.GiteaURL, "gitea-url", c.GiteaURL, "Gitea base URL (self-hosted)")
 	fs.StringVar(&c.GiteaOwner, "gitea-owner", c.GiteaOwner, "Gitea owner (empty = authenticated user)")
 	workers := fs.Int("workers", parseIntOr("CORRAL_SYNC_WORKERS", 4), "concurrent workers")
+	fs.DurationVar(&c.Timeout, "timeout", c.Timeout, "maximum time per repository/provider operation")
 	fs.BoolVar(&c.DryRun, "dry-run", false, "log actions without executing them")
 	levelStr := fs.String("log-level", envOr("CORRAL_SYNC_LOG_LEVEL", "info"), "debug|info|warn|error")
 
@@ -99,8 +111,11 @@ func Load(args []string) (Config, error) {
 	}
 
 	c.Workers = *workers
-	if c.Workers < 1 {
-		return Config{}, errors.New("workers must be >= 1")
+	if c.Workers < 1 || c.Workers > 64 {
+		return Config{}, errors.New("workers must be between 1 and 64")
+	}
+	if c.Timeout <= 0 {
+		return Config{}, errors.New("timeout must be greater than zero")
 	}
 
 	lvl, err := parseLevel(*levelStr)
@@ -112,7 +127,7 @@ func Load(args []string) (Config, error) {
 	// A base dir without a `.git` at the root is fine (it is a parent of
 	// per-repo directories). But it must exist — otherwise every walk
 	// step is a wasted syscall.
-	if fi, err := os.Stat(c.BaseDir); err != nil {
+	if fi, err := statPath(c.BaseDir); err != nil {
 		return Config{}, fmt.Errorf("base-dir %q: %w", c.BaseDir, err)
 	} else if !fi.IsDir() {
 		return Config{}, fmt.Errorf("base-dir %q is not a directory", c.BaseDir)
@@ -127,8 +142,47 @@ func Load(args []string) (Config, error) {
 	if c.GiteaToken != "" && c.GiteaURL == "" {
 		return Config{}, errors.New("GITEA_TOKEN set but GITEA_URL is empty")
 	}
+	if err := validateToken("GL_TOKEN", c.GitLabToken); err != nil {
+		return Config{}, err
+	}
+	if err := validateToken("GITEA_TOKEN", c.GiteaToken); err != nil {
+		return Config{}, err
+	}
+	if c.GitLabToken != "" {
+		if err := validateProviderURL("GL_URL", c.GitLabURL); err != nil {
+			return Config{}, err
+		}
+	}
+	if c.GiteaToken != "" {
+		if err := validateProviderURL("GITEA_URL", c.GiteaURL); err != nil {
+			return Config{}, err
+		}
+	}
+	if fs.NArg() != 0 {
+		return Config{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " "))
+	}
+	abs, err := absolutePath(c.BaseDir)
+	if err != nil {
+		return Config{}, fmt.Errorf("resolve base-dir: %w", err)
+	}
+	c.BaseDir = filepath.Clean(abs)
 
 	return c, nil
+}
+
+func validateProviderURL(name, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%s must be an HTTPS origin without credentials, query, or fragment", name)
+	}
+	return nil
+}
+
+func validateToken(name, token string) error {
+	if strings.ContainsAny(token, "\r\n") {
+		return fmt.Errorf("%s contains invalid control characters", name)
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {
@@ -150,6 +204,18 @@ func parseIntOr(key string, fallback int) int {
 	return n
 }
 
+func parseDurationOr(key string, fallback time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
+}
+
 func parseLevel(s string) (slog.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "debug":
@@ -168,7 +234,7 @@ func parseLevel(s string) (slog.Level, error) {
 // maintainer's own machine. If $HOME is unset (unusual in cron but possible)
 // the caller must set --base-dir or CORRAL_SYNC_BASE_DIR explicitly.
 func defaultBaseDir() string {
-	home, err := os.UserHomeDir()
+	home, err := userHomeDir()
 	if err != nil {
 		return ""
 	}
