@@ -41,15 +41,35 @@ directed at `GITEA_URL`. No cross-provider header, no cross-provider URL.
 are the only files that touch either token; each has one `http.Client`
 scoped to its own `baseURL`.
 
-### C2. corral-sync cannot force a git push
+### C2. corral-sync cannot force branch history
 
 **Argument.** The `git push` commands are literally
-`git push --prune --all <remote>` and `git push --prune --tags <remote>` —
-no `--force`, no `--force-with-lease`. If the remote has commits the local
-mirror doesn't, git refuses the push and corral-sync surfaces the error.
+`git push --prune --all <remote>` without `--force`. If the remote has branch
+commits the local mirror does not, git refuses the push and corral-sync
+surfaces the error. Tags intentionally use `--force` because the documented
+mirror contract makes the local tag namespace authoritative.
 
 **Evidence.** `internal/gitops/gitops.go` contains every `git push`
-invocation; there is no `--force` anywhere in the codebase.
+invocation and confines `--force` to the tag-only operation.
+
+### C6. Provider credentials cannot cross an origin boundary
+
+**Argument.** Provider origins must be credential-free HTTPS URLs. HTTP
+redirects are refused, API bodies are limited to one MiB, and clone URLs are
+validated before reaching git. This prevents redirect-based custom-header
+leakage and credential-bearing or local-path destinations.
+
+### C7. Existing public/private state cannot be silently reused
+
+**Argument.** Existing GitLab and Gitea repositories must match the desired
+visibility. Duplicate local repository names, including case-only variants,
+abort discovery so two source repositories cannot converge on one destination.
+
+### C8. Unattended operations are bounded
+
+**Argument.** HTTP requests have a 30-second client timeout and each
+repository/provider operation has a configurable deadline (five minutes by
+default). Worker concurrency is capped at 64.
 
 ### C3. corral-sync fails closed on missing tokens
 
@@ -87,9 +107,8 @@ credential helper fails loudly instead of stalling.
 ### In scope
 
 - **Token leakage in logs**: tokens are never logged; only presence is.
-- **Malicious API response**: JSON decoding into typed structs; the
-  decoder rejects unknown top-level types. A malicious `ssh_url_to_repo`
-  is limited to whatever `git remote add` accepts as a URL.
+- **Malicious API response**: bounded JSON decoding into typed structs;
+  clone URLs and visibility are validated before local git configuration.
 - **Supply chain against release**: SHA-pinned actions, cosign, SLSA.
 - **Dependency compromise**: stdlib only — zero third-party runtime
   dependencies to compromise.

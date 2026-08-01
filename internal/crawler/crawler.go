@@ -7,12 +7,20 @@
 package crawler
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/sebastienrousseau/corral-sync/internal/remote"
+)
+
+var (
+	walkDir      = filepath.WalkDir
+	lstat        = os.Lstat
+	relativePath = filepath.Rel
 )
 
 // Walk finds every local repository under baseDir and returns them as
@@ -30,9 +38,13 @@ import (
 // is much worse than the reverse, which the user notices immediately.
 func Walk(baseDir string) ([]remote.Repo, error) {
 	var repos []remote.Repo
+	seen := make(map[string]string)
 
-	err := filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
+	err := walkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			if filepath.Clean(path) == filepath.Clean(baseDir) {
+				return err
+			}
 			// Permission errors mid-walk should not abort — cron users
 			// often have stray directories they can't read. Skip
 			// silently; the orchestrator logs the resulting count.
@@ -48,9 +60,16 @@ func Walk(baseDir string) ([]remote.Repo, error) {
 		}
 
 		// Is this a repo root? (Does it contain a .git entry?)
-		if _, statErr := os.Lstat(filepath.Join(path, ".git")); statErr == nil {
+		if info, statErr := lstat(filepath.Join(path, ".git")); statErr == nil &&
+			(info.IsDir() || info.Mode().IsRegular()) {
+			name := filepath.Base(path)
+			key := strings.ToLower(name)
+			if previous, exists := seen[key]; exists {
+				return fmt.Errorf("repository name collision %q between %s and %s", name, previous, path)
+			}
+			seen[key] = path
 			repos = append(repos, remote.Repo{
-				Name:       filepath.Base(path),
+				Name:       name,
 				LocalPath:  path,
 				Visibility: visibilityFromPath(baseDir, path),
 			})
@@ -63,6 +82,7 @@ func Walk(baseDir string) ([]remote.Repo, error) {
 	if err != nil {
 		return nil, err
 	}
+	sort.Slice(repos, func(i, j int) bool { return repos[i].LocalPath < repos[j].LocalPath })
 	return repos, nil
 }
 
@@ -71,17 +91,21 @@ func Walk(baseDir string) ([]remote.Repo, error) {
 // otherwise. Case-sensitive on purpose — corral produces `Public` /
 // `Private` with those exact capitalisations.
 func visibilityFromPath(baseDir, repoPath string) remote.Visibility {
-	rel, err := filepath.Rel(baseDir, repoPath)
+	rel, err := relativePath(baseDir, repoPath)
 	if err != nil {
 		return remote.Private
 	}
+	public := false
 	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
 		switch seg {
 		case "Public":
-			return remote.Public
+			public = true
 		case "Private":
 			return remote.Private
 		}
+	}
+	if public {
+		return remote.Public
 	}
 	return remote.Private
 }

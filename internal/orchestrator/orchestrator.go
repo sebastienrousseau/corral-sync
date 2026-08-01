@@ -11,9 +11,17 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/sebastienrousseau/corral-sync/internal/gitops"
 	"github.com/sebastienrousseau/corral-sync/internal/remote"
+)
+
+var (
+	isEmpty      = gitops.IsEmpty
+	ensureRemote = gitops.EnsureRemote
+	pushAll      = gitops.PushAllWithPrune
+	pushTags     = gitops.PushTagsWithPrune
 )
 
 // Result summarises one run. Written to slog so cron output stays
@@ -31,7 +39,7 @@ type Result struct {
 // The pool pattern is standard: a job channel fed from the main goroutine,
 // workers pulling until the channel closes, results collected via atomics
 // (only two counters — no need for a result channel).
-func Run(ctx context.Context, providers []remote.Provider, repos []remote.Repo, workers int, dryRun bool, logger *slog.Logger) Result {
+func Run(ctx context.Context, providers []remote.Provider, repos []remote.Repo, workers int, timeout time.Duration, dryRun bool, logger *slog.Logger) Result {
 	if workers < 1 {
 		workers = 1
 	}
@@ -52,7 +60,7 @@ func Run(ctx context.Context, providers []remote.Provider, repos []remote.Repo, 
 					slog.String("repo", r.Name),
 					slog.String("visibility", string(r.Visibility)),
 				)
-				if err := processOne(ctx, providers, r, dryRun, &disabled, &providerErrs, lg); err != nil {
+				if err := processOne(ctx, providers, r, timeout, dryRun, &disabled, &providerErrs, lg); err != nil {
 					errs.Add(1)
 					lg.Error("repo failed", slog.String("err", err.Error()))
 					continue
@@ -88,12 +96,18 @@ enqueue:
 // An empty local repo (unborn HEAD) is a legitimate state — the upstream
 // GitHub repo may have been created and never pushed to. We SKIP it
 // with an INFO log rather than erroring out on `git push`.
-func processOne(ctx context.Context, providers []remote.Provider, r remote.Repo, dryRun bool, disabled *sync.Map, providerErrs *atomic.Int64, log *slog.Logger) error {
+func processOne(ctx context.Context, providers []remote.Provider, r remote.Repo, timeout time.Duration, dryRun bool, disabled *sync.Map, providerErrs *atomic.Int64, log *slog.Logger) error {
 	// Empty-repo check runs once per repo (not per provider) — the
 	// answer does not depend on which remote we would push to.
-	if !dryRun && gitops.IsEmpty(r.LocalPath) {
-		log.Info("skipping empty repo (no commits yet)")
-		return nil
+	if !dryRun {
+		empty, err := isEmpty(ctx, r.LocalPath)
+		if err != nil {
+			return err
+		}
+		if empty {
+			log.Info("skipping empty repo (no commits yet)")
+			return nil
+		}
 	}
 
 	for _, p := range providers {
@@ -106,28 +120,35 @@ func processOne(ctx context.Context, providers []remote.Provider, r remote.Repo,
 			continue
 		}
 
-		cloneURL, err := p.EnsureRepo(ctx, r)
+		opCtx, cancel := context.WithTimeout(ctx, timeout)
+		cloneURL, err := p.EnsureRepo(opCtx, r)
 		if err != nil {
 			if remote.IsFatal(err) {
 				if _, loaded := disabled.LoadOrStore(p.Name(), err.Error()); !loaded {
 					providerErrs.Add(1)
 					lg.Error("provider disabled", slog.String("err", err.Error()))
 				}
+				cancel()
 				continue
 			}
+			cancel()
 			return err
 		}
 		lg.Debug("ensured", slog.String("clone_url", cloneURL))
 
-		if err := gitops.EnsureRemote(ctx, r.LocalPath, p.Name(), cloneURL); err != nil {
+		if err := ensureRemote(opCtx, r.LocalPath, p.Name(), cloneURL); err != nil {
+			cancel()
 			return err
 		}
-		if err := gitops.PushAllWithPrune(ctx, r.LocalPath, p.Name()); err != nil {
+		if err := pushAll(opCtx, r.LocalPath, p.Name()); err != nil {
+			cancel()
 			return err
 		}
-		if err := gitops.PushTagsWithPrune(ctx, r.LocalPath, p.Name()); err != nil {
+		if err := pushTags(opCtx, r.LocalPath, p.Name()); err != nil {
+			cancel()
 			return err
 		}
+		cancel()
 		lg.Info("mirrored")
 	}
 	return nil

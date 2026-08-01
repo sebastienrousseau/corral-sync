@@ -12,12 +12,14 @@
 package gitops
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"unicode"
+
+	"github.com/sebastienrousseau/corral-sync/internal/remote"
 )
 
 // nonInteractiveEnv is the environment overlay that guarantees a git
@@ -37,10 +39,19 @@ var nonInteractiveEnv = []string{
 //
 // Matches corral's internal/git.IsEmpty implementation so the two
 // binaries agree on which repositories are "not yet worth pushing".
-func IsEmpty(repoDir string) bool {
+func IsEmpty(ctx context.Context, repoDir string) (bool, error) {
 	// #nosec G204 -- fixed binary; repoDir is a local path.
-	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "-q", "HEAD^{commit}")
-	return cmd.Run() != nil
+	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+	cmd.Env = append(cmd.Environ(), nonInteractiveEnv...)
+	err := cmd.Run()
+	if err == nil {
+		return false, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return true, nil
+	}
+	return false, fmt.Errorf("inspect repository: %w", err)
 }
 
 // EnsureRemote adds a remote at name→url on the repo at repoDir. If a
@@ -48,21 +59,27 @@ func IsEmpty(repoDir string) bool {
 // If the URL differs we update it via `git remote set-url`, which keeps
 // the local state converging with the desired state on every run.
 func EnsureRemote(ctx context.Context, repoDir, name, url string) error {
-	current, err := runOut(ctx, repoDir, "git", "remote", "get-url", name)
+	if err := validateRemoteName(name); err != nil {
+		return err
+	}
+	if err := remote.ValidateCloneURL(url); err != nil {
+		return err
+	}
+	current, err := runOut(ctx, repoDir, "git", "config", "--get", "remote."+name+".url")
 	if err == nil {
 		if strings.TrimSpace(current) == url {
 			return nil // already correct
 		}
 		// The remote exists but points somewhere else. Update in place.
-		return run(ctx, repoDir, "git", "remote", "set-url", name, url)
+		return run(ctx, repoDir, "git", "remote", "set-url", "--", name, url)
 	}
 	// If the remote doesn't exist, `get-url` exits 2 with "No such
 	// remote". Any other error propagates.
 	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
 		return err
 	}
-	return run(ctx, repoDir, "git", "remote", "add", name, url)
+	return run(ctx, repoDir, "git", "remote", "add", "--", name, url)
 }
 
 // PushAllWithPrune uploads every local branch to the remote and deletes
@@ -82,6 +99,9 @@ func EnsureRemote(ctx context.Context, repoDir, name, url string) error {
 // forward is surfaced as an error rather than silently overwriting remote
 // history — the safety net that stops a stale local clobbering the remote.
 func PushAllWithPrune(ctx context.Context, repoDir, remoteName string) error {
+	if err := validateRemoteName(remoteName); err != nil {
+		return err
+	}
 	return run(ctx, repoDir, "git", "push", "--prune", "--all", "--no-verify", remoteName)
 }
 
@@ -99,7 +119,51 @@ func PushAllWithPrune(ctx context.Context, repoDir, remoteName string) error {
 // authoritative, so force-mirroring them to match origin is intended.
 // --no-verify skips local pre-push hooks, same as the branch push.
 func PushTagsWithPrune(ctx context.Context, repoDir, remoteName string) error {
+	if err := validateRemoteName(remoteName); err != nil {
+		return err
+	}
 	return run(ctx, repoDir, "git", "push", "--prune", "--tags", "--force", "--no-verify", remoteName)
+}
+
+func validateRemoteName(name string) error {
+	if name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, "./\\\r\n\x00") {
+		return fmt.Errorf("invalid remote name %q", name)
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return fmt.Errorf("invalid remote name %q", name)
+		}
+	}
+	return nil
+}
+
+type limitedBuffer struct {
+	b         strings.Builder
+	truncated bool
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	const limit = 4096
+	n := len(p)
+	remaining := limit - b.b.Len()
+	if remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+			b.truncated = true
+		}
+		_, _ = b.b.Write(p)
+	} else if len(p) > 0 {
+		b.truncated = true
+	}
+	return n, nil
+}
+
+func (b *limitedBuffer) String() string {
+	s := b.b.String()
+	if b.truncated {
+		s += "...(truncated)"
+	}
+	return s
 }
 
 // run executes a git command in repoDir, discarding its output; errors
@@ -108,7 +172,7 @@ func run(ctx context.Context, dir string, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(), nonInteractiveEnv...)
-	var stderr bytes.Buffer
+	var stderr limitedBuffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
@@ -123,11 +187,11 @@ func runOut(ctx context.Context, dir string, name string, args ...string) (strin
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(), nonInteractiveEnv...)
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr limitedBuffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", err
+		return "", fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
 }

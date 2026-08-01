@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -30,25 +31,34 @@ import (
 // Version is injected at build time via -ldflags "-X main.Version=v...".
 var Version = "dev"
 
+var (
+	exitProcess               = os.Exit
+	stderr          io.Writer = os.Stderr
+	loadConfig                = config.Load
+	walkRepos                 = crawler.Walk
+	runOrchestrator           = orchestrator.Run
+	signalContext             = signal.NotifyContext
+)
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		// Never fmt.Println to stderr from here — slog owns stderr. A
 		// hard-fail before slog is set up is the only place we print
 		// raw text.
-		fmt.Fprintln(os.Stderr, "corral-sync:", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintln(stderr, "corral-sync:", err)
+		exitProcess(1)
 	}
 }
 
 func run(args []string) error {
-	cfg, err := config.Load(args)
+	cfg, err := loadConfig(args)
 	if err != nil {
 		return err
 	}
 
 	// JSON handler on stderr so cron log files stay grep-friendly and
 	// downstream log shippers can parse without regex.
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{
 		Level: cfg.LogLevel,
 	}))
 	logger.Info("starting",
@@ -60,10 +70,10 @@ func run(args []string) error {
 
 	// Ctx is cancelled by SIGINT/SIGTERM so a stuck git push doesn't
 	// linger past a `kill` from the user.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signalContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	repos, err := crawler.Walk(cfg.BaseDir)
+	repos, err := walkRepos(cfg.BaseDir)
 	if err != nil {
 		return fmt.Errorf("crawl %s: %w", cfg.BaseDir, err)
 	}
@@ -82,7 +92,7 @@ func run(args []string) error {
 	}
 	logger.Info("providers configured", slog.Int("count", len(providers)))
 
-	res := orchestrator.Run(ctx, providers, repos, cfg.Workers, cfg.DryRun, logger)
+	res := runOrchestrator(ctx, providers, repos, cfg.Workers, cfg.Timeout, cfg.DryRun, logger)
 	logger.Info("done",
 		slog.Int("processed", res.Processed),
 		slog.Int("errors", res.Errors),
@@ -92,6 +102,9 @@ func run(args []string) error {
 	if res.Errors > 0 {
 		// Non-zero exit so cron can email on failure.
 		return fmt.Errorf("%d/%d repos failed", res.Errors, len(repos))
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("sync interrupted: %w", err)
 	}
 	return nil
 }

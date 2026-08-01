@@ -12,15 +12,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/sebastienrousseau/corral-sync/internal/remote"
+)
+
+var (
+	marshalJSON = json.Marshal
+	newRequest  = http.NewRequestWithContext
 )
 
 // Client is the Gitea API client.
@@ -43,10 +46,8 @@ func New(baseURL, token, owner string, logger *slog.Logger) *Client {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		owner:   owner,
-		http: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		log: logger.With(slog.String("provider", "gitea")),
+		http:    remote.NewHTTPClient(),
+		log:     logger.With(slog.String("provider", "gitea")),
 	}
 }
 
@@ -60,6 +61,7 @@ type repoJSON struct {
 	SSHURL   string `json:"ssh_url"`
 	CloneURL string `json:"clone_url"`
 	HTMLURL  string `json:"html_url"`
+	Private  bool   `json:"private"`
 }
 
 type destination struct {
@@ -95,6 +97,12 @@ func (e *responseError) Error() string {
 // resolve the existing repo via GET /repos/{owner}/{name} and return its
 // SSH URL.
 func (c *Client) EnsureRepo(ctx context.Context, r remote.Repo) (string, error) {
+	if r.Visibility == "" {
+		r.Visibility = remote.Private
+	}
+	if err := remote.ValidateRepo(r); err != nil {
+		return "", err
+	}
 	dest, err := c.resolveDestination(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolve destination: %w", err)
@@ -105,6 +113,9 @@ func (c *Client) EnsureRepo(ctx context.Context, r remote.Repo) (string, error) 
 	// already exists and could be reused.
 	rj, err := c.getRepo(ctx, dest.owner, r.Name)
 	if err == nil {
+		if err := validateRepo(rj, r.Visibility); err != nil {
+			return "", err
+		}
 		c.log.Debug("repo exists, reusing", slog.String("full_name", rj.FullName))
 		return rj.SSHURL, nil
 	}
@@ -119,12 +130,12 @@ func (c *Client) EnsureRepo(ctx context.Context, r remote.Repo) (string, error) 
 		"auto_init":      false,
 		"default_branch": "main",
 	}
-	body, err := json.Marshal(payload)
+	body, err := marshalJSON(payload)
 	if err != nil {
 		return "", fmt.Errorf("marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+dest.createPath, bytes.NewReader(body))
+	req, err := newRequest(ctx, http.MethodPost, c.baseURL+dest.createPath, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -136,13 +147,16 @@ func (c *Client) EnsureRepo(ctx context.Context, r remote.Repo) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("POST user/repos: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusCreated:
 		var rj repoJSON
-		if err := json.NewDecoder(resp.Body).Decode(&rj); err != nil {
+		if err := remote.DecodeJSON(resp.Body, &rj); err != nil {
 			return "", fmt.Errorf("decode 201: %w", err)
+		}
+		if err := validateRepo(&rj, r.Visibility); err != nil {
+			return "", err
 		}
 		c.log.Info("created repo", slog.String("full_name", rj.FullName))
 		return rj.SSHURL, nil
@@ -152,17 +166,37 @@ func (c *Client) EnsureRepo(ctx context.Context, r remote.Repo) (string, error) 
 		if err != nil {
 			return "", fmt.Errorf("resolve existing repo %s/%s: %w", dest.owner, r.Name, err)
 		}
+		if err := validateRepo(rj, r.Visibility); err != nil {
+			return "", err
+		}
 		c.log.Debug("repo exists, reusing", slog.String("full_name", rj.FullName))
 		return rj.SSHURL, nil
 
 	default:
-		msg, _ := io.ReadAll(resp.Body)
-		err := fmt.Errorf("gitea create returned %d: %s", resp.StatusCode, truncate(msg))
+		msg, readErr := remote.ReadBody(resp.Body)
+		if readErr != nil {
+			return "", readErr
+		}
+		err := fmt.Errorf("gitea create returned %d: %s", resp.StatusCode, truncate(remote.Redact(msg, c.token)))
 		if isFatalCreateError(resp.StatusCode, msg) {
 			return "", remote.Fatal(err)
 		}
 		return "", err
 	}
+}
+
+func validateRepo(rj *repoJSON, want remote.Visibility) error {
+	got := remote.Public
+	if rj.Private {
+		got = remote.Private
+	}
+	if got != want {
+		return fmt.Errorf("existing Gitea repository visibility is %q, want %q", got, want)
+	}
+	if err := remote.ValidateCloneURL(rj.SSHURL); err != nil {
+		return fmt.Errorf("invalid Gitea clone URL: %w", err)
+	}
+	return nil
 }
 
 // resolveDestination determines both the repository owner used for
@@ -208,7 +242,7 @@ func (c *Client) resolveDestination(ctx context.Context) (destination, error) {
 // getRepo fetches an existing repository by owner and name.
 func (c *Client) getRepo(ctx context.Context, owner, name string) (*repoJSON, error) {
 	path := "/api/v1/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	req, err := newRequest(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -219,18 +253,21 @@ func (c *Client) getRepo(ctx context.Context, owner, name string) (*repoJSON, er
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(resp.Body)
+		msg, readErr := remote.ReadBody(resp.Body)
+		if readErr != nil {
+			return nil, readErr
+		}
 		return nil, &responseError{
 			method: http.MethodGet,
 			path:   path,
 			status: resp.StatusCode,
-			body:   truncate(msg),
+			body:   truncate(remote.Redact(msg, c.token)),
 		}
 	}
 	var rj repoJSON
-	if err := json.NewDecoder(resp.Body).Decode(&rj); err != nil {
+	if err := remote.DecodeJSON(resp.Body, &rj); err != nil {
 		return nil, err
 	}
 	return &rj, nil
@@ -238,7 +275,7 @@ func (c *Client) getRepo(ctx context.Context, owner, name string) (*repoJSON, er
 
 // getJSON is a small helper for authenticated GET-then-decode requests.
 func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	req, err := newRequest(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return err
 	}
@@ -249,21 +286,24 @@ func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(resp.Body)
+		msg, readErr := remote.ReadBody(resp.Body)
+		if readErr != nil {
+			return readErr
+		}
 		err := &responseError{
 			method: http.MethodGet,
 			path:   path,
 			status: resp.StatusCode,
-			body:   truncate(msg),
+			body:   truncate(remote.Redact(msg, c.token)),
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return remote.Fatal(err)
 		}
 		return err
 	}
-	return json.NewDecoder(resp.Body).Decode(dst)
+	return remote.DecodeJSON(resp.Body, dst)
 }
 
 func isStatus(err error, status int) bool {
