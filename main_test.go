@@ -20,10 +20,11 @@ import (
 
 func withMainSeams(t *testing.T) {
 	t.Helper()
-	oldExit, oldStderr, oldLoad, oldWalk, oldRun, oldSignal := exitProcess, stderr, loadConfig, walkRepos, runOrchestrator, signalContext
+	oldExit, oldStdout, oldStderr, oldLoad, oldWalk, oldRun, oldSignal := exitProcess, stdout, stderr, loadConfig, walkRepos, runOrchestrator, signalContext
 	t.Cleanup(func() {
-		exitProcess, stderr, loadConfig, walkRepos, runOrchestrator, signalContext = oldExit, oldStderr, oldLoad, oldWalk, oldRun, oldSignal
+		exitProcess, stdout, stderr, loadConfig, walkRepos, runOrchestrator, signalContext = oldExit, oldStdout, oldStderr, oldLoad, oldWalk, oldRun, oldSignal
 	})
+	stdout = io.Discard
 	stderr = io.Discard
 	loadConfig = func([]string) (config.Config, error) {
 		return config.Config{BaseDir: t.TempDir(), Workers: 1, Timeout: time.Second, DryRun: true}, nil
@@ -35,6 +36,27 @@ func withMainSeams(t *testing.T) {
 		return orchestrator.Result{Processed: 1}
 	}
 }
+
+func TestRunVersion(t *testing.T) {
+	withMainSeams(t)
+	var out bytes.Buffer
+	stdout = &out
+	if err := run([]string{"--version"}); err != nil {
+		t.Fatalf("run version: %v", err)
+	}
+	if got, want := out.String(), "corral-sync version "+Version+"\n"; got != want {
+		t.Fatalf("version output = %q, want %q", got, want)
+	}
+
+	stdout = failingWriter{}
+	if err := run([]string{"--version"}); err == nil {
+		t.Fatal("expected version write error")
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write") }
 
 func TestMainReportsFailure(t *testing.T) {
 	withMainSeams(t)

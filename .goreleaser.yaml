@@ -41,6 +41,17 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
+homebrew_casks:
+  - name: corral-sync
+    repository:
+      owner: sebastienrousseau
+      name: homebrew-tap
+      token: '{{ .Env.HOMEBREW_TAP_TOKEN }}'
+    binaries:
+      - corral-sync
+    homepage: https://github.com/sebastienrousseau/corral-sync
+    description: Mirror a corral tree to GitLab and Gitea
+
 snapshot:
   version_template: '{{ incpatch .Version }}-next'
 

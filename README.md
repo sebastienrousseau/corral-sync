@@ -11,6 +11,32 @@ corralctl ...      →  local ~/Code/{Public,Private}/{lang}/{repo}
 corral-sync ...    →  local  →  GitLab + Gitea
 ```
 
+## Install
+
+### mise (macOS / Linux)
+
+```bash
+mise use -g github:sebastienrousseau/corral-sync
+```
+
+### Homebrew (macOS / Linux)
+
+```bash
+brew install sebastienrousseau/tap/corral-sync
+```
+
+### Build from source
+
+Requires Go 1.26+ and Git:
+
+```bash
+git clone https://github.com/sebastienrousseau/corral-sync.git
+cd corral-sync
+make install            # installs ~/.local/bin/corral-sync
+```
+
+Verify the installed binary with `corral-sync --version`.
+
 ## Quick start
 
 ```bash

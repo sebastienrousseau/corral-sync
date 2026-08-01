@@ -6,6 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] — 2026-08-01
+
+Security hardening, mirror correctness, and complete unit coverage.
+
+### Added
+
+- Homebrew publishing and direct mise installation through GitHub releases.
+- A `--version` command for package-manager and installation verification.
+- Bounded HTTP bodies, git output, repository discovery, worker concurrency,
+  and per-operation timeouts throughout the mirror pipeline.
+- Full tests across configuration, crawler, providers, git operations,
+  orchestration, and the entry point, bringing statement coverage to 100%.
+
+### Fixed
+
+- Existing Gitea repositories are reused correctly, while fatal provider
+  failures stop dependent work instead of cascading misleading errors.
+- Tag synchronization now force-updates divergent tags, prunes removed tags,
+  and bypasses local pre-push hooks during automated mirrors.
+- API redirects, credential-bearing clone URLs, insecure origins, visibility
+  mismatches, duplicate names, option-like git arguments, and symlink escapes
+  are rejected before mutation.
+
+### Security
+
+- Release tags must be semantic versions on `main`, and source tests must pass
+  before GoReleaser publishes signed, attested artifacts.
+
+## [0.0.2] — 2026-07-05
+
 ### Fixed
 
 - **GitLab project creation** was rejected with
@@ -58,4 +88,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   images to `ghcr.io/sebastienrousseau/corral-sync`, cosign keyless
   signing, SLSA v1.0 provenance via `actions/attest-build-provenance`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral-sync/compare/HEAD...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral-sync/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/sebastienrousseau/corral-sync/compare/v0.0.2...v0.0.3
+[0.0.2]: https://github.com/sebastienrousseau/corral-sync/compare/v0.0.1...v0.0.2
