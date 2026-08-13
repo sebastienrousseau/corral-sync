@@ -29,6 +29,10 @@ updates:
     commit-message:
       prefix: chore(ci)
       include: scope
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   # Dockerfile base image pin — refreshed on new distroless releases.
   - package-ecosystem: docker
