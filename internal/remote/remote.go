@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 
 // Package remote defines the abstractions shared between the GitLab and Gitea
 // provider clients. Keeping them here — instead of duplicating on each side —

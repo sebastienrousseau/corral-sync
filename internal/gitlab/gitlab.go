@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 
 // Package gitlab implements the [remote.Provider] surface against the
 // GitLab REST API v4. It authenticates with a Personal Access Token

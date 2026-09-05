@@ -50,7 +50,7 @@ concrete plan for handing over.
 ### Community fork (unplanned)
 
 If the maintainer becomes unresponsive for **≥ 6 months**, the
-community is explicitly encouraged to fork. GPL-3.0-only permits it.
+community is explicitly encouraged to fork. Apache-2.0 OR MIT permits it.
 A community fork:
 
 - May keep the name **only after** the old repo is archived by the

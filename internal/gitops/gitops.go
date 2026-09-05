@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 
 // Package gitops wraps the local git binary. We shell out via os/exec —
 // no libgit2, no go-git — so behaviour exactly matches what a user would

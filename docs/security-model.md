@@ -140,7 +140,7 @@ corral-sync has a single maintainer. Mitigations:
 - **Public assurance case (this doc).**
 - **Documented signing keys** in `GOVERNANCE.md`.
 - **Documented external services** in `MAINTAINERS.md`.
-- **Fork-and-continue is explicit** under GPL-3.0-only with a 6-month
+- **Fork-and-continue is explicit** under Apache-2.0 OR MIT with a 6-month
   unresponsive-maintainer clause.
 
 ## 7. Review and update
