@@ -31,11 +31,11 @@ var (
 // descend into a repo's working tree, so nested submodules are not
 // double-counted.
 //
-// Visibility is deduced from the presence of a `Public` or `Private`
-// segment anywhere in the path relative to baseDir — matching the layout
-// corral produces. If neither is present we default to [remote.Private]
-// because it is the safer failure mode: leaking a private repo as public
-// is much worse than the reverse, which the user notices immediately.
+// Visibility is deduced from the directory segments between baseDir and
+// the repository — see visibilityFromPath for the exact rule. If nothing
+// there says otherwise we default to [remote.Private] because it is the
+// safer failure mode: leaking a private repo as public is much worse than
+// the reverse, which the user notices immediately.
 func Walk(baseDir string) ([]remote.Repo, error) {
 	var repos []remote.Repo
 	seen := make(map[string]string)
@@ -86,21 +86,35 @@ func Walk(baseDir string) ([]remote.Repo, error) {
 	return repos, nil
 }
 
-// visibilityFromPath returns [remote.Public] if any segment of the path
-// between baseDir and repoPath is literally "Public"; [remote.Private]
-// otherwise. Case-sensitive on purpose — corral produces `Public` /
-// `Private` with those exact capitalisations.
+// visibilityFromPath classifies a repository from the directory segments
+// between baseDir and the repository itself.
+//
+// corral's default layout is `{{.Collection}}/{{.Bucket}}/{{.Name}}`, where
+// Collection is `Public`, `Private` or `Forks`; a custom `--layout` may use
+// `{{.Visibility}}` instead, which corral lower-cases to `public` or
+// `private`. So a segment equal to either spelling of "public" makes the
+// repository [remote.Public], and either spelling of "private" makes it
+// [remote.Private] — and private wins whenever both appear, because a
+// tree that contradicts itself must not leak.
+//
+// `Forks` says nothing about visibility, so it defaults to private: a
+// fork's upstream may be public, but the fork is the user's copy and the
+// safe reading is the conservative one. Any other segment is ignored.
+//
+// The repository's own directory name is deliberately not consulted. A
+// repository called "public" is a name, not a classification.
 func visibilityFromPath(baseDir, repoPath string) remote.Visibility {
 	rel, err := relativePath(baseDir, repoPath)
 	if err != nil {
 		return remote.Private
 	}
+	segments := strings.Split(rel, string(filepath.Separator))
 	public := false
-	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
-		switch seg {
-		case "Public":
+	for _, seg := range segments[:len(segments)-1] {
+		switch strings.ToLower(seg) {
+		case "public":
 			public = true
-		case "Private":
+		case "private":
 			return remote.Private
 		}
 	}

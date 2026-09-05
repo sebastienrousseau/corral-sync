@@ -112,13 +112,25 @@ func TestWalkInjectedBranches(t *testing.T) {
 	}
 }
 
-func TestVisibilityPrivateWinsAndRelFailure(t *testing.T) {
-	path := filepath.Join("base", "Public", "Private", "repo")
-	if got := visibilityFromPath("base", path); got != remote.Private {
-		t.Fatalf("visibility = %q", got)
+func TestVisibilityFromPath(t *testing.T) {
+	cases := map[string]remote.Visibility{
+		filepath.Join("Public", "Go", "repo"):      remote.Public,
+		filepath.Join("Private", "Go", "repo"):     remote.Private,
+		filepath.Join("Forks", "Go", "repo"):       remote.Private,
+		filepath.Join("owner", "public", "repo"):   remote.Public,
+		filepath.Join("owner", "private", "repo"):  remote.Private,
+		filepath.Join("Public", "Private", "repo"): remote.Private,
+		filepath.Join("private", "Public", "repo"): remote.Private,
+		filepath.Join("other", "repo"):             remote.Private,
+		filepath.Join("Private", "Go", "Public"):   remote.Private,
+		"public":                                   remote.Private,
+		filepath.Join("PUBLIC", "repo"):            remote.Public,
+		filepath.Join("Public-stuff", "repo"):      remote.Private,
 	}
-	if got := visibilityFromPath("base", filepath.Join("base", "other", "repo")); got != remote.Private {
-		t.Fatalf("default visibility = %q", got)
+	for rel, want := range cases {
+		if got := visibilityFromPath("base", filepath.Join("base", rel)); got != want {
+			t.Errorf("visibilityFromPath(%q) = %q, want %q", rel, got, want)
+		}
 	}
 	oldRel := relativePath
 	t.Cleanup(func() { relativePath = oldRel })
