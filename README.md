@@ -1,6 +1,13 @@
 # corral-sync
 
-Mirror a [corral](https://github.com/sebastienrousseau/corral)-organised
+> **Superseded by `corralctl sync`.** corral-sync has been folded into
+> [corralctl](https://github.com/sebastienrousseau/corralctl), which mirrors
+> to GitHub, GitLab, Gitea, Forgejo, Codeberg and Bitbucket from the same
+> binary that clones. v0.0.5 is the last standalone feature release; it keeps
+> working, but new capability lands in `corralctl sync`. See
+> [Migrating to corralctl sync](#migrating-to-corralctl-sync).
+
+Mirror a [corral](https://github.com/sebastienrousseau/corralctl)-organised
 local repository tree to **GitLab** and **Gitea** with absolute-parity
 semantics (`git push --prune`), driven by a bounded worker pool.
 
@@ -77,9 +84,13 @@ cron will email you on failure.
 - **Idempotence** — `EnsureRepo` returns success when the repo already
   exists (GitLab 400 with "has already been taken" or 409, Gitea 409).
   `git remote add` becomes `git remote set-url` if the URL drifts.
-- **Parity via prune** — every push is `--prune --all` then `--prune
-  --tags`, so branches/tags that disappeared locally disappear on the
-  remote.
+- **Parity via prune** — one push per repository per provider,
+  `--prune <remote> refs/heads/*:refs/heads/* +refs/tags/*:refs/tags/*`, so
+  branches and tags that disappeared locally disappear on the remote.
+  Branches are never forced; tags follow the local namespace.
+- **Never onto its own forge** — a repository whose `origin` is on a
+  provider's host is skipped for that provider. corralctl clones from six
+  forges, and pruning a clone against its own upstream is not a mirror.
 - **Concurrency** — worker pool over repos; providers run sequentially
   per repo to avoid `.git/` contention.
 - **Non-interactive git env** — `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=echo`,
@@ -96,6 +107,45 @@ cron will email you on failure.
 ## Deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for compile + Keychain + crontab.
+
+## Migrating to corralctl sync
+
+`corralctl sync` does what corral-sync does, for six forges, with the
+credentials `corralctl clone` already uses. The remote names `gitlab` and
+`gitea` are the same, so clones corral-sync has already configured carry
+over without a change.
+
+```bash
+brew install sebastienrousseau/tap/corralctl     # or mise, the AUR, go install
+
+export GITLAB_TOKEN="$GL_TOKEN"
+export GITEA_TOKEN                                 # unchanged
+corralctl sync --to gitlab --to gitea@https://gitea.example.com --dry-run
+corralctl sync --to gitlab --to gitea@https://gitea.example.com --protocol ssh
+```
+
+| corral-sync | corralctl sync |
+|---|---|
+| `GL_TOKEN` | `GITLAB_TOKEN` (or `CORRAL_GITLAB_TOKEN`) |
+| `GL_URL=https://gl.example.com` | `--to gitlab@https://gl.example.com` |
+| `GL_NAMESPACE=group` | `--to gitlab:group` |
+| `GITEA_TOKEN` | `GITEA_TOKEN` (unchanged) |
+| `GITEA_URL=https://…` | `--to gitea@https://…` |
+| `GITEA_OWNER=org` | `--to gitea:org@https://…` |
+| `--base-dir`, `CORRAL_SYNC_BASE_DIR` | `--base-dir` |
+| `--workers`, `CORRAL_SYNC_WORKERS` | `--concurrency` |
+| `--timeout`, `CORRAL_SYNC_TIMEOUT` | `--timeout` |
+| `--log-level`, `CORRAL_SYNC_LOG_LEVEL` | `--log-level` |
+| `--dry-run` | `--dry-run` |
+| pushes over SSH | HTTPS with the token by default; `--protocol ssh` for keys |
+
+The crontab entry in [DEPLOYMENT.md](DEPLOYMENT.md) becomes a single binary
+doing both halves:
+
+```text
+15 5 * * *  corralctl clone --yes sebastienrousseau ~/Code >> ~/Library/Logs/corral.log 2>&1 \
+              && corralctl sync --to gitlab --to gitea@https://gitea.example.com >> ~/Library/Logs/corral-sync.log 2>&1
+```
 
 ## License
 
