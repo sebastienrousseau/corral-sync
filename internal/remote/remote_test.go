@@ -65,6 +65,34 @@ func TestValidateCloneURL(t *testing.T) {
 	}
 }
 
+func TestCanonicalHost(t *testing.T) {
+	cases := map[string]string{
+		"https://GitLab.com/owner/repo.git":        "gitlab.com",
+		"https://gitea.example.com:3000/o/r":       "gitea.example.com",
+		"ssh://git@Gitea.Example.com:2222/o/r.git": "gitea.example.com",
+		"git@github.com:owner/repo.git":            "github.com",
+		"deploy@codeberg.org:owner/repo.git":       "codeberg.org",
+		"  git@gitlab.com:owner/repo.git\n":        "gitlab.com",
+		"":                                         "",
+		"   ":                                      "",
+		"/srv/git/repo.git":                        "",
+		"file:///srv/git/repo.git":                 "",
+		"C:/repos/repo":                            "",
+		"C:\\repos\\repo":                          "",
+		"bad url with space://x":                   "",
+		"http://[::1/x":                            "",
+		"../relative/path:with-colon":              "",
+		":repo":                                    "",
+		"@:owner/repo":                             "",
+		"owner/repo":                               "",
+	}
+	for raw, want := range cases {
+		if got := CanonicalHost(raw); got != want {
+			t.Errorf("CanonicalHost(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestHTTPHelpers(t *testing.T) {
 	c := NewHTTPClient()
 	if c.Timeout == 0 {
@@ -109,5 +137,17 @@ func FuzzValidateCloneURL(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, raw string) {
 		_ = ValidateCloneURL(raw)
+	})
+}
+
+func FuzzCanonicalHost(f *testing.F) {
+	for _, seed := range []string{"git@example.com:a/b.git", "https://example.com/a.git", "", "/tmp/x", "a:b"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		host := CanonicalHost(raw)
+		if host != strings.ToLower(host) || strings.ContainsAny(host, ":/@ ") {
+			t.Fatalf("CanonicalHost(%q) = %q is not a bare lower-case host", raw, host)
+		}
 	})
 }

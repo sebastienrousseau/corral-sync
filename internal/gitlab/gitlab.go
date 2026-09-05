@@ -34,6 +34,7 @@ var (
 // only mutable state.
 type Client struct {
 	baseURL   string
+	host      string
 	token     string
 	namespace string
 	http      *http.Client
@@ -50,6 +51,7 @@ type Client struct {
 func New(baseURL, token, namespace string, logger *slog.Logger) *Client {
 	return &Client{
 		baseURL:   strings.TrimRight(baseURL, "/"),
+		host:      remote.CanonicalHost(baseURL),
 		token:     token,
 		namespace: namespace,
 		http:      remote.NewHTTPClient(),
@@ -60,6 +62,10 @@ func New(baseURL, token, namespace string, logger *slog.Logger) *Client {
 // Name satisfies [remote.Provider]. Stable identifier used as the git
 // remote name — do not change without a migration plan.
 func (c *Client) Name() string { return "gitlab" }
+
+// Host satisfies [remote.Provider]: the hostname of the configured GitLab
+// instance, which the orchestrator checks against each repository's origin.
+func (c *Client) Host() string { return c.host }
 
 // projectJSON is the subset of GitLab's Project object we care about.
 // GitLab returns many more fields; leaving them out means our decoder is

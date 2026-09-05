@@ -74,8 +74,8 @@ func TestEnsureRepoCreatesAndCachesNamespace(t *testing.T) {
 			t.Fatalf("EnsureRepo = %q, %v", url, err)
 		}
 	}
-	if c.Name() != "gitlab" || namespaceCalls != 1 {
-		t.Fatalf("name=%q namespace calls=%d", c.Name(), namespaceCalls)
+	if c.Name() != "gitlab" || c.Host() != "gitlab.test" || namespaceCalls != 1 {
+		t.Fatalf("name=%q host=%q namespace calls=%d", c.Name(), c.Host(), namespaceCalls)
 	}
 }
 

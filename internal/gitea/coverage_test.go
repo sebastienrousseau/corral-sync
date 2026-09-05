@@ -23,8 +23,8 @@ func testClient(handler roundTripFunc) *Client {
 
 func TestClientNameAndResponseError(t *testing.T) {
 	c := testClient(nil)
-	if c.Name() != "gitea" {
-		t.Fatalf("name = %q", c.Name())
+	if c.Name() != "gitea" || c.Host() != "gitea.test" {
+		t.Fatalf("name = %q, host = %q", c.Name(), c.Host())
 	}
 	err := (&responseError{method: "GET", path: "/x", status: 500, body: "failed"}).Error()
 	if !strings.Contains(err, "GET /x returned 500") {

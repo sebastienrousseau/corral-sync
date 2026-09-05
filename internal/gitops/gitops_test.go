@@ -12,13 +12,15 @@ import (
 	"testing"
 )
 
-func gitCommand(t *testing.T, dir string, args ...string) {
+func gitCommand(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, out)
 	}
+	return strings.TrimSpace(string(out))
 }
 
 func initRepo(t *testing.T, commit bool) string {
@@ -27,14 +29,31 @@ func initRepo(t *testing.T, commit bool) string {
 	gitCommand(t, dir, "init", "-b", "main")
 	gitCommand(t, dir, "config", "user.name", "Test")
 	gitCommand(t, dir, "config", "user.email", "test@example.com")
+	gitCommand(t, dir, "config", "commit.gpgsign", "false")
 	if commit {
-		if err := os.WriteFile(filepath.Join(dir, "README"), []byte("test"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		gitCommand(t, dir, "add", "README")
-		gitCommand(t, dir, "commit", "-m", "initial")
+		commitFile(t, dir, "README", "test")
 	}
 	return dir
+}
+
+func commitFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, dir, "add", name)
+	gitCommand(t, dir, "commit", "-q", "-m", "add "+name)
+}
+
+func remoteRefs(t *testing.T, bare string) map[string]string {
+	t.Helper()
+	refs := map[string]string{}
+	for _, line := range strings.Split(gitCommand(t, bare, "for-each-ref", "--format=%(refname) %(objectname)"), "\n") {
+		if fields := strings.Fields(line); len(fields) == 2 {
+			refs[fields[0]] = fields[1]
+		}
+	}
+	return refs
 }
 
 func TestIsEmpty(t *testing.T) {
@@ -50,6 +69,23 @@ func TestIsEmpty(t *testing.T) {
 	}
 	if _, err := IsEmpty(context.Background(), filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("expected inspection error")
+	}
+}
+
+func TestOriginURL(t *testing.T) {
+	repo := initRepo(t, true)
+	ctx := context.Background()
+	got, err := OriginURL(ctx, repo)
+	if err != nil || got != "" {
+		t.Fatalf("no origin = %q, %v", got, err)
+	}
+	gitCommand(t, repo, "remote", "add", "origin", "git@gitlab.com:owner/repo.git")
+	got, err = OriginURL(ctx, repo)
+	if err != nil || got != "git@gitlab.com:owner/repo.git" {
+		t.Fatalf("origin = %q, %v", got, err)
+	}
+	if _, err := OriginURL(ctx, filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("expected error for a missing directory")
 	}
 }
 
@@ -80,25 +116,69 @@ func TestEnsureRemote(t *testing.T) {
 	}
 }
 
-func TestPushOperations(t *testing.T) {
+// TestPushMirrorSemantics pins the three properties the security model
+// relies on (C2): branches are never forced, tags are, and both namespaces
+// are pruned to parity with the local repository — in one push.
+func TestPushMirrorSemantics(t *testing.T) {
+	ctx := context.Background()
 	repo := initRepo(t, true)
 	bare := t.TempDir()
 	gitCommand(t, bare, "init", "--bare")
 	gitCommand(t, repo, "remote", "add", "mirror", bare)
+	gitCommand(t, repo, "branch", "feature")
 	gitCommand(t, repo, "tag", "v1")
-	if err := PushAllWithPrune(context.Background(), repo, "mirror"); err != nil {
+	first := gitCommand(t, repo, "rev-parse", "HEAD")
+
+	if err := PushMirror(ctx, repo, "mirror"); err != nil {
 		t.Fatal(err)
 	}
-	if err := PushTagsWithPrune(context.Background(), repo, "mirror"); err != nil {
+	refs := remoteRefs(t, bare)
+	if refs["refs/heads/main"] != first || refs["refs/heads/feature"] != first || refs["refs/tags/v1"] != first {
+		t.Fatalf("first push refs = %v", refs)
+	}
+
+	// Local moves on: a branch is deleted, a tag is re-pointed, and the
+	// remote grows a branch and a tag nobody has locally.
+	gitCommand(t, repo, "branch", "-D", "feature")
+	commitFile(t, repo, "second", "2")
+	second := gitCommand(t, repo, "rev-parse", "HEAD")
+	gitCommand(t, repo, "tag", "-f", "v1")
+	gitCommand(t, bare, "update-ref", "refs/heads/remote-only", first)
+	gitCommand(t, bare, "update-ref", "refs/tags/remote-tag", first)
+
+	if err := PushMirror(ctx, repo, "mirror"); err != nil {
 		t.Fatal(err)
 	}
-	if err := PushAllWithPrune(context.Background(), repo, "bad/name"); err == nil {
+	refs = remoteRefs(t, bare)
+	if refs["refs/heads/main"] != second {
+		t.Fatalf("main not fast-forwarded: %v", refs)
+	}
+	if refs["refs/tags/v1"] != second {
+		t.Fatalf("tag not force-updated: %v", refs)
+	}
+	for _, gone := range []string{"refs/heads/feature", "refs/heads/remote-only", "refs/tags/remote-tag"} {
+		if _, exists := refs[gone]; exists {
+			t.Fatalf("%s was not pruned: %v", gone, refs)
+		}
+	}
+
+	// A branch that diverged from the remote must be refused, and the
+	// remote left untouched — the one thing a mirror must never do is
+	// rewrite history it did not produce.
+	gitCommand(t, repo, "reset", "-q", "--hard", first)
+	commitFile(t, repo, "diverged", "3")
+	err := PushMirror(ctx, repo, "mirror")
+	if err == nil || !strings.Contains(err.Error(), "non-fast-forward") && !strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("expected a refused non-fast-forward push, got %v", err)
+	}
+	if got := remoteRefs(t, bare)["refs/heads/main"]; got != second {
+		t.Fatalf("remote main rewritten to %s after a refused push", got)
+	}
+
+	if err := PushMirror(ctx, repo, "bad/name"); err == nil {
 		t.Fatal("expected invalid remote error")
 	}
-	if err := PushTagsWithPrune(context.Background(), repo, "-bad"); err == nil {
-		t.Fatal("expected invalid tag remote error")
-	}
-	if err := PushAllWithPrune(context.Background(), repo, "missing"); err == nil {
+	if err := PushMirror(ctx, repo, "missing"); err == nil {
 		t.Fatal("expected missing remote error")
 	}
 }

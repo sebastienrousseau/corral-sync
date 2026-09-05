@@ -63,6 +63,12 @@ type Provider interface {
 	// leave orphan remotes on every local clone.
 	Name() string
 
+	// Host is the lower-cased hostname the provider's API lives on, without
+	// a port — "gitlab.com", "gitea.example.com". The orchestrator compares
+	// it against each repository's origin so a clone that corral pulled
+	// *from* this forge is never pushed back onto it with --prune.
+	Host() string
+
 	// EnsureRepo creates the repository on the remote if it does not
 	// already exist, and returns the SSH or HTTPS clone URL that
 	// git push should target. Existing-repo is not an error.
@@ -114,4 +120,45 @@ func ValidateCloneURL(raw string) error {
 		return fmt.Errorf("unsupported clone URL scheme %q", u.Scheme)
 	}
 	return nil
+}
+
+// CanonicalHost extracts the lower-cased hostname from a remote URL in any
+// of the forms git accepts — https://, ssh://, and the scp-like
+// `git@host:owner/repo.git` — without its port or user. It returns "" for
+// anything it cannot read as a remote, including a local path.
+//
+// It exists for one comparison: whether a repository's origin lives on the
+// forge a provider would push to. corral clones from GitLab, Gitea, Forgejo,
+// Codeberg and Bitbucket as well as GitHub, so a tree it manages can contain
+// a clone whose origin *is* the destination. Mirroring that clone back would
+// mean `git push --prune` against its own upstream, and with a single-branch
+// clone --prune deletes every branch the local copy does not have.
+func CanonicalHost(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.Contains(raw, "://") {
+		// A URL with a scheme. file:// has no host, and that is the answer:
+		// a local path is not on any forge.
+		u, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		return strings.ToLower(u.Hostname())
+	}
+	// scp-like: [user@]host:path. A slash before the colon is a path, as
+	// git reads it, and a single letter before it is a Windows drive.
+	colon := strings.Index(raw, ":")
+	if colon <= 0 || strings.Contains(raw[:colon], "/") {
+		return ""
+	}
+	host := raw[:colon]
+	if at := strings.LastIndex(host, "@"); at >= 0 {
+		host = host[at+1:]
+	}
+	if len(host) <= 1 {
+		return ""
+	}
+	return strings.ToLower(host)
 }

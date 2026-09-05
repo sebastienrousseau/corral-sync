@@ -101,6 +101,7 @@ func run(args []string) error {
 	res := runOrchestrator(ctx, providers, repos, cfg.Workers, cfg.Timeout, cfg.DryRun, logger)
 	logger.Info("done",
 		slog.Int("processed", res.Processed),
+		slog.Int("skipped", res.Skipped),
 		slog.Int("errors", res.Errors),
 		slog.Int("total_repos", len(repos)),
 	)
