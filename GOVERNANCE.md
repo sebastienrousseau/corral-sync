@@ -55,7 +55,7 @@ documented in [MAINTAINERS.md](MAINTAINERS.md). Key facts:
 
 - **Repository ownership**: `sebastienrousseau/corral-sync` is owned by
   the Maintainer's personal GitHub account. Any user may fork under
-  GPL-3.0-only without further permission.
+  Apache-2.0 OR MIT without further permission.
 - **Release signing key**: Release tags are signed with the
   Maintainer's SSH ed25519 key (fingerprint
   `SHA256:kIOPAavp1TCEauTr1tTIN3cv+tSs6F9m/4lZjuM9tqk`). Every release

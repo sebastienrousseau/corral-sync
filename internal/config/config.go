@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 
 // Package config parses environment variables and CLI flags into a single
 // [Config] value that every other package can read. Centralising it here
@@ -61,8 +61,11 @@ type Config struct {
 	Timeout time.Duration
 
 	// DryRun causes the orchestrator to log every intended action
-	// without performing any HTTP request or git command. Useful when
-	// wiring up cron for the first time.
+	// without performing any HTTP request or any git command that writes.
+	// The read-only inspections still run — whether a repository is empty,
+	// and where its origin points — so the preview shows exactly which
+	// repositories a real run would skip. Useful when wiring up cron for
+	// the first time.
 	DryRun bool
 
 	// LogLevel filters slog records. debug/info/warn/error.
