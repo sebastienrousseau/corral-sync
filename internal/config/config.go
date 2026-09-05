@@ -61,8 +61,11 @@ type Config struct {
 	Timeout time.Duration
 
 	// DryRun causes the orchestrator to log every intended action
-	// without performing any HTTP request or git command. Useful when
-	// wiring up cron for the first time.
+	// without performing any HTTP request or any git command that writes.
+	// The read-only inspections still run — whether a repository is empty,
+	// and where its origin points — so the preview shows exactly which
+	// repositories a real run would skip. Useful when wiring up cron for
+	// the first time.
 	DryRun bool
 
 	// LogLevel filters slog records. debug/info/warn/error.
