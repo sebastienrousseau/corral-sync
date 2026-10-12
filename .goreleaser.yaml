@@ -49,6 +49,7 @@ homebrew_casks:
       token: '{{ .Env.HOMEBREW_TAP_TOKEN }}'
       pull_request:
         enabled: true
+    skip_upload: true
     binaries:
       - corral-sync
     homepage: https://github.com/sebastienrousseau/corral-sync

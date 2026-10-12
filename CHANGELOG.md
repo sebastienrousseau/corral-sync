@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-10-13
+
+### Fixed
+
+- Set `skip_upload: true` for Homebrew cask in GoReleaser configuration so releases complete successfully and generate SLSA provenance attestations.
+
 ## [0.0.6] - 2026-10-12
 
 ### Changed
@@ -157,7 +163,8 @@ Security hardening, mirror correctness, and complete unit coverage.
   images to `ghcr.io/sebastienrousseau/corral-sync`, cosign keyless
   signing, SLSA v1.0 provenance via `actions/attest-build-provenance`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral-sync/compare/v0.0.6...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral-sync/compare/v0.0.7...HEAD
+[0.0.7]: https://github.com/sebastienrousseau/corral-sync/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/sebastienrousseau/corral-sync/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/sebastienrousseau/corral-sync/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/sebastienrousseau/corral-sync/compare/v0.0.3...v0.0.4
