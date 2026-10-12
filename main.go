@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 
 // corral-sync mirrors a corral-organised local repository tree out to
 // GitLab and Gitea with absolute-parity semantics (`git push --prune`).
@@ -101,6 +101,7 @@ func run(args []string) error {
 	res := runOrchestrator(ctx, providers, repos, cfg.Workers, cfg.Timeout, cfg.DryRun, logger)
 	logger.Info("done",
 		slog.Int("processed", res.Processed),
+		slog.Int("skipped", res.Skipped),
 		slog.Int("errors", res.Errors),
 		slog.Int("total_repos", len(repos)),
 	)

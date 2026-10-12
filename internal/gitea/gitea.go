@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 
 // Package gitea implements the [remote.Provider] surface against the
 // Gitea REST API v1. Gitea's create endpoint returns a proper 409
@@ -29,6 +29,7 @@ var (
 // Client is the Gitea API client.
 type Client struct {
 	baseURL string
+	host    string
 	token   string
 	owner   string
 	http    *http.Client
@@ -44,6 +45,7 @@ type Client struct {
 func New(baseURL, token, owner string, logger *slog.Logger) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
+		host:    remote.CanonicalHost(baseURL),
 		token:   token,
 		owner:   owner,
 		http:    remote.NewHTTPClient(),
@@ -53,6 +55,10 @@ func New(baseURL, token, owner string, logger *slog.Logger) *Client {
 
 // Name satisfies [remote.Provider].
 func (c *Client) Name() string { return "gitea" }
+
+// Host satisfies [remote.Provider]: the hostname of the configured Gitea
+// instance, which the orchestrator checks against each repository's origin.
+func (c *Client) Host() string { return c.host }
 
 // repoJSON is the subset of Gitea's Repository object we care about.
 type repoJSON struct {

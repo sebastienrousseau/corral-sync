@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 
 package gitlab
 
@@ -74,8 +74,8 @@ func TestEnsureRepoCreatesAndCachesNamespace(t *testing.T) {
 			t.Fatalf("EnsureRepo = %q, %v", url, err)
 		}
 	}
-	if c.Name() != "gitlab" || namespaceCalls != 1 {
-		t.Fatalf("name=%q namespace calls=%d", c.Name(), namespaceCalls)
+	if c.Name() != "gitlab" || c.Host() != "gitlab.test" || namespaceCalls != 1 {
+		t.Fatalf("name=%q host=%q namespace calls=%d", c.Name(), c.Host(), namespaceCalls)
 	}
 }
 

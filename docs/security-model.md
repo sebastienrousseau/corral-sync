@@ -1,6 +1,8 @@
 # corral-sync — Security Model & Assurance Case
 
-**Status:** Living document. Initial version: 2026-07-02.
+**Status:** Living document. Initial version: 2026-07-02. Last reviewed for
+0.0.5 on 2026-09-06, the release that folds corral-sync into `corralctl sync`;
+the same claims hold there, in `internal/mirror` and `internal/git/mirror.go`.
 **Owner:** Sebastien Rousseau ([@sebastienrousseau](https://github.com/sebastienrousseau)).
 **Scope:** the `corral-sync` binary, the release pipeline that produces it,
 and the local + remote state it manages.
@@ -43,14 +45,31 @@ scoped to its own `baseURL`.
 
 ### C2. corral-sync cannot force branch history
 
-**Argument.** The `git push` commands are literally
-`git push --prune --all <remote>` without `--force`. If the remote has branch
-commits the local mirror does not, git refuses the push and corral-sync
-surfaces the error. Tags intentionally use `--force` because the documented
-mirror contract makes the local tag namespace authoritative.
+**Argument.** The one `git push` is
+`git push --prune --no-verify <remote> refs/heads/*:refs/heads/* +refs/tags/*:refs/tags/*`.
+The branch refspec carries no force marker, so if the remote has branch
+commits the local mirror does not, git refuses that ref and corral-sync
+surfaces the error with the remote untouched. Only the tag refspec is forced,
+because the documented mirror contract makes the local tag namespace
+authoritative.
 
-**Evidence.** `internal/gitops/gitops.go` contains every `git push`
-invocation and confines `--force` to the tag-only operation.
+**Evidence.** `internal/gitops/gitops.go` contains the only `git push`
+invocation, and `TestPushMirrorSemantics` pushes to a real bare repository
+and asserts all three properties: branches never forced, tags forced, both
+namespaces pruned.
+
+### C9. A clone is never mirrored back onto its own forge
+
+**Argument.** Each provider reports the hostname of its API origin, the
+orchestrator reads each repository's `origin` once, and a provider whose host
+matches is skipped for that repository. corralctl clones from GitLab, Gitea,
+Forgejo, Codeberg and Bitbucket as well as GitHub, so a tree it manages can
+hold a clone whose origin *is* a destination, and `--prune` against a
+repository's own upstream would delete every branch a single-branch clone
+does not carry.
+
+**Evidence.** `internal/orchestrator/orchestrator.go` `processOne`, and
+`TestOriginGuard`, which covers real and dry runs.
 
 ### C6. Provider credentials cannot cross an origin boundary
 
@@ -140,7 +159,7 @@ corral-sync has a single maintainer. Mitigations:
 - **Public assurance case (this doc).**
 - **Documented signing keys** in `GOVERNANCE.md`.
 - **Documented external services** in `MAINTAINERS.md`.
-- **Fork-and-continue is explicit** under GPL-3.0-only with a 6-month
+- **Fork-and-continue is explicit** under Apache-2.0 OR MIT with a 6-month
   unresponsive-maintainer clause.
 
 ## 7. Review and update

@@ -6,6 +6,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5] — 2026-09-06
+
+**This is the last standalone feature release.** corral-sync has been
+folded into corralctl as `corralctl sync`, which mirrors to GitHub, GitLab,
+Gitea, Forgejo, Codeberg and Bitbucket from one binary, with one set of
+credentials and one install. See [Migrating to corralctl
+sync](README.md#migrating-to-corralctl-sync) in the README. This release
+carries the fixes that are worth having in the meantime, and every one of
+them is also in `corralctl sync`.
+
+### Fixed
+
+- **A clone is never mirrored back onto its own forge.** corralctl clones
+  from GitLab, Gitea, Forgejo, Codeberg and Bitbucket as well as GitHub, so
+  a tree it manages can hold a clone whose origin *is* a corral-sync
+  destination. corral-sync would ensure a same-named project there —
+  finding the origin itself — point a second remote at it, and run
+  `git push --prune` against the repository's own upstream. With corral's
+  `--clone-single-branch`, that deletes every branch the local copy does
+  not carry. Each provider now reports its host, the orchestrator reads
+  each repository's origin once, and a matching provider is skipped for
+  that repository with an INFO record and a count in the final summary.
+- **Visibility follows the layouts corral now produces.** The default
+  layout's collection is `Public`, `Private` or `Forks`, and a custom
+  `--layout` may use `{{.Visibility}}`, which corral lower-cases. The
+  crawler matched `Public`/`Private` case-sensitively, so a tree laid out
+  with `{{.Visibility}}` mirrored everything as private, and a repository
+  *named* "Public" was classified by its own name. Segments now compare
+  case-insensitively, the repository's own name is never consulted, and
+  private still wins whenever both appear.
+- **Every licence reference says Apache-2.0 OR MIT.** 0.0.4 shipped the
+  licence files for the dual grant while every source header, the README,
+  the governance documents, the OCI labels and the OpenSSF answers still
+  said GPL-3.0-only.
+
+### Changed
+
+- **Branches and tags are pushed in one round trip.**
+  `git push --prune --no-verify <remote> refs/heads/*:refs/heads/*
+  +refs/tags/*:refs/tags/*` replaces the pair of `--prune --all` and
+  `--prune --tags --force`, halving the connections, authentications and
+  ref advertisements per repository per provider. The semantics are
+  unchanged and now pinned by a test against a real bare repository:
+  branches are never forced and a non-fast-forward leaves the remote
+  untouched, tags are forced, and both namespaces are pruned.
+- **Dry runs run the read-only inspections.** Whether a repository is empty
+  and where its origin points are both checked in `--dry-run`, so the
+  preview shows exactly which repositories a real run would skip. Nothing
+  that writes runs in a dry run, as before.
+- The non-interactive git environment now also sets `SSH_ASKPASS=/bin/true`
+  and uses `/bin/true` for `GIT_ASKPASS`, matching corralctl, so an SSH
+  passphrase prompt cannot stall a cron run either.
+- Built with Go 1.26.6, the toolchain corralctl pins, and the GitHub
+  Actions group bumped to the versions Dependabot proposed in #35.
+
 ## [0.0.4] — 2026-08-01
 
 ### Fixed

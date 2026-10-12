@@ -82,7 +82,7 @@ dockers:
       - --label=org.opencontainers.image.source=https://github.com/sebastienrousseau/corral-sync
       - --label=org.opencontainers.image.version={{ .Version }}
       - --label=org.opencontainers.image.revision={{ .FullCommit }}
-      - --label=org.opencontainers.image.licenses=GPL-3.0-only
+      - --label=org.opencontainers.image.licenses=Apache-2.0 OR MIT
 
   - image_templates:
       - ghcr.io/sebastienrousseau/corral-sync:{{ .Version }}-arm64
@@ -97,7 +97,7 @@ dockers:
       - --label=org.opencontainers.image.source=https://github.com/sebastienrousseau/corral-sync
       - --label=org.opencontainers.image.version={{ .Version }}
       - --label=org.opencontainers.image.revision={{ .FullCommit }}
-      - --label=org.opencontainers.image.licenses=GPL-3.0-only
+      - --label=org.opencontainers.image.licenses=Apache-2.0 OR MIT
 
 docker_manifests:
   - name_template: ghcr.io/sebastienrousseau/corral-sync:{{ .Version }}
